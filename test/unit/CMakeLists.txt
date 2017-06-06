@@ -141,7 +141,7 @@ add_executable(say.test say.c unit.c)
 target_link_libraries(say.test core)
 
 include_directories(${PROJECT_SOURCE_DIR}/src/box)
-add_executable(vy_mem.test vy_mem.c unit.c)
+add_executable(vy_mem.test vy_mem.c unit.c vy_iterators_helper.c)
 target_link_libraries(vy_mem.test box)
 
 add_executable(column_mask.test column_mask.c unit.c)
