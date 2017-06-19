@@ -2344,7 +2344,14 @@ vy_index_recovery_cb(const struct vy_log_record *record, void *cb_arg)
 			goto out;
 		run->dump_lsn = record->dump_lsn;
 		if (vy_run_recover(run, index->env->conf->path,
-				   index->space_id, index->id) != 0) {
+				   index->space_id, index->id) != 0 &&
+		    (cfg_geti("force_recovery") == false ||
+		     vy_run_rebuild_index(run, index->env->conf->path,
+					  index->space_id, index->id,
+					  index->key_def, index->user_key_def,
+					  index->space_format,
+					  index->upsert_format,
+					  &index->opts) != 0)) {
 			vy_run_unref(run);
 			goto out;
 		}
