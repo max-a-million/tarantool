@@ -51,6 +51,7 @@
 #include "xrow.h"
 #include "xrow_io.h"
 #include "xstream.h"
+#include "wal.h"
 
 /** Report relay status to tx thread at least once per this interval */
 static const int RELAY_REPORT_INTERVAL = 1;
@@ -213,12 +214,6 @@ relay_final_join(int fd, uint64_t sync, struct vclock *start_vclock,
 	});
 }
 
-static void
-feed_event_f(struct trigger *trigger, void * /* event */)
-{
-	ev_feed_event(loop(), (struct ev_io *) trigger->data, EV_CUSTOM);
-}
-
 /**
  * The message which updated tx thread with a new vclock has returned back
  * to the relay.
@@ -281,6 +276,13 @@ relay_cbus_detach(struct relay *relay)
 	ipc_cond_destroy(&relay->status_cond);
 }
 
+static void
+relay_wal_notification(void *data)
+{
+	struct relay *relay = (struct relay *)data;
+	recovery_recover(relay->r, &relay->stream);
+}
+
 /**
  * A libev callback invoked when a relay client socket is ready
  * for read. This currently only happens when the client closes
@@ -302,9 +304,30 @@ relay_subscribe_f(va_list ap)
 	auto cbus_guard = make_scoped_guard([&]{
 		relay_cbus_detach(relay);
 	});
+	struct wal_watcher watcher;
+	wal_set_watcher(&watcher, relay->endpoint.name,
+			relay_wal_notification, relay);
+	/* Wait until watcher is attached */
+	while (watcher.attached == false) {
+		fiber_yield();
+		cbus_process(&relay->endpoint);
+	}
+
+	auto watcher_guard = make_scoped_guard([&]{
+		say_warn("det1");
+		wal_clear_watcher(&watcher);
+		say_warn("det2");
+		while (watcher.attached == true) {
+			say_warn("det3");
+			fiber_yield();
+			say_warn("det4");
+			cbus_process(&relay->endpoint);
+			say_warn("det5");
+		}
+	});
 	relay_set_cord_name(relay->io.fd);
-	recovery_follow_local(r, &relay->stream, fiber_name(fiber()),
-			      relay->wal_dir_rescan_delay);
+	/* Send rows written before watcher setup */
+	recovery_recover(relay->r, &relay->stream);
 
 	/*
 	 * Init a read event: when replica closes its end
@@ -315,24 +338,8 @@ relay_subscribe_f(va_list ap)
 	read_ev.data = fiber();
 	ev_io_init(&read_ev, (ev_io_cb) fiber_schedule_cb,
 		   relay->io.fd, EV_READ);
-	/**
-	 * If there is an exception in the follower fiber, it's
-	 * sufficient to break the main fiber's wait on the read
-	 * event.
-	 * recovery_stop_local() will follow and raise the
-	 * original exception in the joined fiber.  This original
-	 * exception will reach cord_join() and will be raised
-	 * further up, eventually reaching iproto_process(), where
-	 * it'll get converted to an iproto message and sent to
-	 * the client.
-	 * It's safe to allocate the trigger on stack, the life of
-	 * the follower fiber is enclosed into life of this fiber.
-	 */
-	struct trigger on_follow_error = {
-		RLIST_LINK_INITIALIZER, feed_event_f, &read_ev, NULL
-	};
-	trigger_add(&r->watcher->on_stop, &on_follow_error);
-	while (! fiber_is_dead(r->watcher)) {
+
+	while (! fiber_is_cancelled()) {
 		double timeout = RELAY_REPORT_INTERVAL;
 		struct errinj *inj = errinj(ERRINJ_RELAY_REPORT_INTERVAL,
 					    ERRINJ_DOUBLE);
@@ -376,12 +383,6 @@ relay_subscribe_f(va_list ap)
 		relay->status_msg.relay = relay;
 		cpipe_push(&relay->tx_pipe, &relay->status_msg.msg);
 	}
-	/*
-	 * Avoid double wakeup: both from the on_stop and fiber
-	 * cancel events.
-	 */
-	trigger_clear(&on_follow_error);
-	recovery_stop_local(r);
 	return 0;
 }
 

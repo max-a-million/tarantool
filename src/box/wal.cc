@@ -866,32 +866,175 @@ wal_rotate_vy_log()
 	fiber_set_cancellable(cancellable);
 }
 
-int
-wal_set_watcher(struct wal_watcher *watcher, struct ev_async *async)
+/**
+ * Final part of a watcher attach.
+ */
+static void
+wal_watcher_attach_done(struct cmsg *msg)
+{
+	struct wal_watcher_status_msg *status;
+	status = container_of(msg, struct wal_watcher_status_msg, done);
+	struct wal_watcher *watcher;
+	watcher = container_of(status, struct wal_watcher, status);
+	watcher->attached = true;
+}
+
+/**
+ * Register watcher in wal watcher list, create pipe and notify route,
+ * and send finalization message to watcher.
+ */
+static void
+wal_watcher_attach(struct cmsg *msg)
 {
 	struct wal_writer *writer = &wal_writer_singleton;
+	struct wal_watcher_status_msg *status;
+	status = container_of(msg, struct wal_watcher_status_msg, start);
 
+	struct wal_watcher *watcher;
+	watcher = container_of(status, struct wal_watcher, status);
+	cpipe_create(&watcher->watch_pipe, watcher->name);
+	static struct cmsg_hop attach_done_route[1] = {
+		{wal_watcher_attach_done, NULL}
+	};
+	rlist_add_tail_entry(&writer->watchers, watcher, next);
+	cmsg_init(&status->done, attach_done_route);
+	cpipe_push(&watcher->watch_pipe, &status->done);
+}
+
+/**
+ * Call watcher callback.
+ */
+static void
+wal_watcher_notify(struct cmsg *msg)
+{
+	struct wal_watcher_notify_msg *notify =
+		(struct wal_watcher_notify_msg *)msg;
+	struct wal_watcher *watcher = notify->watcher;
+	watcher->cb(watcher->cb_data);
+}
+
+/**
+ * Notify response.
+ */
+static void
+wal_watcher_notify_done(struct cmsg *msg)
+{
+	struct wal_watcher_notify_msg *notify =
+		(struct wal_watcher_notify_msg *)msg;
+	struct wal_watcher *watcher = notify->watcher;
+	if (watcher->outdated) {
+		/* A new event occured while this message handling.
+		 * Initialize a new notification cycle.
+		 */
+		watcher->outdated = false;
+		/* Swap active notification message. */
+		watcher->notify_idx = 1 - watcher->notify_idx;
+		/* Setup and send a new notifiaction. */
+		cmsg_init(&watcher->notify[watcher->notify_idx].msg,
+			  watcher->route);
+		cpipe_push(&watcher->watch_pipe,
+			   &watcher->notify[watcher->notify_idx].msg);
+		return;
+	}
+
+	watcher->in_flight = false;
+}
+
+int
+wal_set_watcher(struct wal_watcher *watcher,
+		const char *name,
+		void (*cb)(void *), void *cb_data)
+{
 	if (journal_is_initialized(&wal_writer_singleton.base) == false)
 		return -1;
 
-	watcher->loop = loop();
-	watcher->async = async;
-	tt_pthread_mutex_lock(&writer->watchers_mutex);
-	rlist_add_tail_entry(&writer->watchers, watcher, next);
-	tt_pthread_mutex_unlock(&writer->watchers_mutex);
+	watcher->name = name;
+	watcher->in_flight = false;
+	watcher->attached = false;
+	cpipe_create(&watcher->wal_pipe, "wal");
+	/* One hop route to wal cord */
+	static struct cmsg_hop attach_route[1] = {
+		{wal_watcher_attach, NULL}
+	};
+	/* Setup notify route */
+	watcher->route[0] = {wal_watcher_notify, &watcher->wal_pipe};
+	watcher->route[1] = {wal_watcher_notify_done, NULL};
+	watcher->notify[0].watcher = watcher;
+	watcher->notify[1].watcher = watcher;
+	watcher->cb = cb;
+	watcher->cb_data = cb_data;
+	watcher->notify_idx = 0;
+
+	cmsg_init(&watcher->status.start, attach_route);
+	cpipe_push(&watcher->wal_pipe, &watcher->status.start);
 	return 0;
+}
+
+/*
+ * Use a 4-phase detach for flushing all pending watcher notification.
+ */
+static void
+wal_watcher_detach_ph4(struct cmsg *msg)
+{
+	struct wal_watcher_status_msg *status;
+	status = container_of(msg, struct wal_watcher_status_msg, done);
+	struct wal_watcher *watcher;
+	watcher = container_of(status, struct wal_watcher, status);
+	watcher->attached = false;
+}
+
+static void
+wal_watcher_detach_ph1(struct cmsg *msg)
+{
+	struct wal_watcher_status_msg *status;
+	status = container_of(msg, struct wal_watcher_status_msg, start);
+	struct wal_watcher *watcher;
+	watcher = container_of(status, struct wal_watcher, status);
+	/* Only remove from notification list and reset outdated flag */
+	rlist_del(&watcher->next);
+	watcher->outdated = false;
+}
+
+static void
+wal_watcher_detach_ph2(struct cmsg *msg)
+{
+	(void) msg;
+}
+
+static void
+wal_watcher_detach_ph3(struct cmsg *msg)
+{
+	struct wal_watcher_status_msg *status;
+	status = container_of(msg, struct wal_watcher_status_msg, start);
+	struct wal_watcher *watcher;
+	watcher = container_of(status, struct wal_watcher, status);
+	watcher->attached = false;
+	/* Setup ans send finalization message. */
+	static struct cmsg_hop detach_done_route[1] = {
+		{wal_watcher_detach_ph4, NULL}
+	};
+	cmsg_init(&status->done, detach_done_route);
+	cpipe_push(&watcher->watch_pipe, &status->done);
+	/* Destroy watcher pipe. */
+	cpipe_destroy(&watcher->watch_pipe);
 }
 
 void
 wal_clear_watcher(struct wal_watcher *watcher)
 {
-	struct wal_writer *writer = &wal_writer_singleton;
 	if (journal_is_initialized(&wal_writer_singleton.base) == false)
 		return;
 
-	tt_pthread_mutex_lock(&writer->watchers_mutex);
-	rlist_del_entry(watcher, next);
-	tt_pthread_mutex_unlock(&writer->watchers_mutex);
+	/* First three hops of a detach process */
+	watcher->detach_route[0] =
+		{wal_watcher_detach_ph1, &watcher->watch_pipe};
+	watcher->detach_route[1] =
+		{wal_watcher_detach_ph2, &watcher->wal_pipe};
+	watcher->detach_route[2] =
+		{wal_watcher_detach_ph3, NULL};
+
+	cmsg_init(&watcher->status.start, watcher->detach_route);
+	cpipe_push(&watcher->wal_pipe, &watcher->status.start);
 }
 
 static void
@@ -899,11 +1042,17 @@ wal_notify_watchers(struct wal_writer *writer)
 {
 	struct wal_watcher *watcher;
 	/* notify watchers */
-	tt_pthread_mutex_lock(&writer->watchers_mutex);
 	rlist_foreach_entry(watcher, &writer->watchers, next) {
-		ev_async_send(watcher->loop, watcher->async);
+		if (watcher->in_flight) {
+			watcher->outdated = true;
+			continue;
+		}
+		watcher->in_flight = true;
+		cmsg_init(&watcher->notify[watcher->notify_idx].msg,
+			  watcher->route);
+		cpipe_push(&watcher->watch_pipe,
+			   &watcher->notify[watcher->notify_idx].msg);
 	}
-	tt_pthread_mutex_unlock(&writer->watchers_mutex);
 }
 
 

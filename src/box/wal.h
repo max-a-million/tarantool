@@ -34,6 +34,7 @@
 #include <sys/types.h>
 #include "small/rlist.h"
 #include "journal.h"
+#include "cbus.h"
 
 struct fiber;
 struct vclock;
@@ -62,11 +63,72 @@ wal_mode();
 void
 wal_thread_stop();
 
+struct wal_watcher_notify_msg {
+	struct cmsg msg;
+	struct wal_watcher *watcher;
+};
+
+/**
+ * Watcher status message for wal attach/detach.
+ */
+struct wal_watcher_status_msg {
+	/*
+	 * We do not have both pipes at attach/detach state and should
+	 * dynamicaly create and destroy pipe/routes. We can not
+	 * handle attach/detach with one message, so create a pair of
+	 * them.
+	 */
+	/** Attach/detach start message. */
+	struct cmsg start;
+	/** Attach/Detach final message. */
+	struct cmsg done;
+};
+
+/**
+ * Wal watcher struct. Any cord with endpoint can subscribe on wal
+ * notifications.
+ */
 struct wal_watcher
 {
 	struct rlist next;
-	struct ev_loop *loop;
-	struct ev_async *async;
+
+	/** Watcher endpoint name */
+	const char *name;
+	/** Watcher->wal connection pipe */
+	struct cpipe wal_pipe;
+	/** Wal->Watcher connection pipe */
+	struct cpipe watch_pipe;
+
+	/** Message for watcher attach/detach */
+	struct wal_watcher_status_msg status;
+
+	/** Notify route */
+	struct cmsg_hop route[2];
+	/** Notification messages */
+	/* When one notification message is sent to the watcher a new event
+	 * can occur. In this case a new notification cycle will be started
+	 * at in-flight notification return to the wal, but existing message
+	 * is not reusable until all external (cbus) message handling is done.
+	 * A pair of messages is used for this case: first message continues
+	 * standart cbus handling and second message is initialized and
+	 * sent to the watcher. After this messages exange.
+	 */
+	struct wal_watcher_notify_msg notify[2];
+	/** Current in-flight notification message index */
+	uint32_t notify_idx;
+
+	/** Callback to call for the watcher */
+	void (*cb)(void *data);
+	/** Callback data */
+	void *cb_data;
+	/** True if there a notification was sent but not still returned */
+	bool in_flight;
+	/** True if a new event occur while in_flight is true */
+	bool outdated;
+	/** True if the watcher is connected to cbus */
+	bool attached;
+	/** Helper detach route (first three hops) */
+	struct cmsg_hop detach_route[3];
 };
 
 /**
@@ -75,7 +137,9 @@ struct wal_watcher
  * Fails (-1) if recovery is NULL or lacking a WAL writer.
  */
 int
-wal_set_watcher(struct wal_watcher *, struct ev_async *);
+wal_set_watcher(struct wal_watcher *,
+		const char *name,
+		void (*cb)(void *), void *cb_data);
 
 void
 wal_clear_watcher(struct wal_watcher *);
