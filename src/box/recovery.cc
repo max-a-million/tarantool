@@ -413,15 +413,15 @@ public:
 		file_stat.data = this;
 		async.data = this;
 
-		ev_async_start(loop(), &async);
+/*		ev_async_start(loop(), &async);
 		if (wal_set_watcher(&watcher, &async) == -1) {
-			/* Fallback to fs events. */
+			/ * Fallback to fs events. * /
 			ev_async_stop(loop(), &async);
 			ev_stat_set(&dir_stat, dir_path, 0.0);
 			ev_stat_start(loop(), &dir_stat);
 			watcher.loop = NULL;
 			watcher.async = NULL;
-		}
+		}*/
 	}
 
 	~WalSubscription()
@@ -467,6 +467,39 @@ public:
 	}
 };
 
+int
+recovery_recover(struct recovery *recovery, struct xstream *stream)
+{
+	int64_t start, end;
+	/* Current position */
+	start = recovery->cursor.state != XLOG_CURSOR_CLOSED ?
+		vclock_sum(&recovery->cursor.meta.vclock) : 0;
+
+	do {
+		start = end;
+		/*
+		 * If there is no current WAL, or we reached
+		 * an end  of one, look for new WALs.
+		 */
+		if (recovery->cursor.state == XLOG_CURSOR_CLOSED
+		    || recovery->cursor.state == XLOG_CURSOR_EOF)
+			xdir_scan_xc(&recovery->wal_dir);
+
+		recover_remaining_wals(recovery, stream, NULL);
+		end = recovery->cursor.state != XLOG_CURSOR_CLOSED ?
+		      vclock_sum(&recovery->cursor.meta.vclock) : 0;
+		/*
+		 * Continue, given there's been progress *and* there is a
+		 * chance new WALs have appeared since.
+		 * Sic: end * is < start (is 0) if someone deleted all logs
+		 * on the filesystem.
+		 */
+	} while (end > start &&
+		 (recovery->cursor.state == XLOG_CURSOR_CLOSED ||
+		  recovery->cursor.state == XLOG_CURSOR_EOF));
+	return 0;
+}
+
 static int
 recovery_follow_f(va_list ap)
 {
@@ -479,40 +512,7 @@ recovery_follow_f(va_list ap)
 
 	while (! fiber_is_cancelled()) {
 
-		/*
-		 * Recover until there is no new stuff which appeared in
-		 * the log dir while recovery was running.
-		 *
-		 * Use vclock signature to represent the current wal
-		 * since the xlog object itself may be freed in
-		 * recover_remaining_rows().
-		 */
-		int64_t start, end;
-		do {
-			start = r->cursor.state != XLOG_CURSOR_CLOSED ?
-				vclock_sum(&r->cursor.meta.vclock) : 0;
-			/*
-			 * If there is no current WAL, or we reached
-			 * an end  of one, look for new WALs.
-			 */
-			if (r->cursor.state == XLOG_CURSOR_CLOSED
-			    || r->cursor.state == XLOG_CURSOR_EOF)
-				xdir_scan_xc(&r->wal_dir);
-
-			recover_remaining_wals(r, stream, NULL);
-
-			end = r->cursor.state != XLOG_CURSOR_CLOSED ?
-			      vclock_sum(&r->cursor.meta.vclock) : 0;
-			/*
-			 * Continue, given there's been progress *and* there is a
-			 * chance new WALs have appeared since.
-			 * Sic: end * is < start (is 0) if someone deleted all logs
-			 * on the filesystem.
-			 */
-		} while (end > start &&
-			 (r->cursor.state == XLOG_CURSOR_CLOSED ||
-			  r->cursor.state == XLOG_CURSOR_EOF));
-
+		recovery_recover(r, stream);
 		subscription.set_log_path(r->cursor.state != XLOG_CURSOR_CLOSED ?
 					  r->cursor.name: NULL);
 

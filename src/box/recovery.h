@@ -67,6 +67,17 @@ recovery_delete(struct recovery *r);
 void
 recovery_exit(struct recovery *r);
 
+/**
+ * Recover until there is no new stuff which appeared in
+ * the log dir while recovery was running.
+ *
+ * @param recovery recovery
+ * @param stream stream to write recovered data
+ * @retval 0 for Success
+ */
+int
+recovery_recover(struct recovery *recovery, struct xstream *stream);
+
 void
 recovery_follow_local(struct recovery *r, struct xstream *stream,
 		      const char *name, ev_tstamp wal_dir_rescan_delay);
