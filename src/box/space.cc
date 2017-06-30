@@ -84,10 +84,16 @@ space_new(struct space_def *def, struct rlist *key_list)
 	uint32_t index_id_max = 0;
 	uint32_t index_count = 0;
 	struct index_def *index_def;
+	struct index_def *primary_index_def = NULL;
 	rlist_foreach_entry(index_def, key_list, link) {
 		index_count++;
 		index_id_max = MAX(index_id_max, index_def->iid);
+		if (index_def->iid == 0) {
+			assert(primary_index_def == NULL);
+			primary_index_def = index_def;
+		}
 	}
+	assert(primary_index_def != NULL || index_count == 0);
 	size_t sz = sizeof(struct space) +
 		(index_count + index_id_max + 1) * sizeof(Index *);
 	struct space *space = (struct space *) calloc(1, sz);
@@ -119,10 +125,15 @@ space_new(struct space_def *def, struct rlist *key_list)
 	space->format->exact_field_count = def->exact_field_count;
 	/* init space engine instance */
 	space->handler = engine->open();
-	/* Fill the space indexes. */
+	/* Fill primary space index. */
+	if (primary_index_def != NULL)
+		space->index_map[0] =
+			space->handler->createIndex(space, primary_index_def);
+	/* Fill secondary space indexes. */
 	rlist_foreach_entry(index_def, key_list, link) {
-		space->index_map[index_def->iid] =
-			space->handler->createIndex(space, index_def);
+		if (index_def != primary_index_def)
+			space->index_map[index_def->iid] =
+				space->handler->createIndex(space, index_def);
 	}
 	space_fill_index_map(space);
 	space->run_triggers = true;
