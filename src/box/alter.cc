@@ -464,6 +464,7 @@ public:
 	virtual void alter_def(struct alter_space * /* alter */) {}
 	virtual void alter(struct alter_space * /* alter */) {}
 	virtual void commit(struct alter_space * /* alter */) {}
+	virtual bool is_rebuild(struct index_def * /* def */) { return false; }
 	virtual ~AlterSpaceOp() {}
 	template <typename T> static T *create();
 	static void destroy(AlterSpaceOp *op);
@@ -571,6 +572,24 @@ alter_space_commit(struct trigger *trigger, void * /* event */)
 		if (old_index != NULL &&
 		    index_def_cmp(new_index->index_def,
 				  old_index->index_def) == 0) {
+			/*
+			 * If the secondary index was rebuilt because of
+			 * changes in primary index, it has equal index def,
+			 * but we must not take it from the original space.
+			 * Check all the operations to find out that
+			 * the index was rebuilt.
+			 */
+			bool was_rebuilt = false;
+			class AlterSpaceOp *op;
+			rlist_foreach_entry(op, &alter->ops, link) {
+				if (op->is_rebuild(new_index->index_def)) {
+					was_rebuilt = true;
+					break;
+				}
+			}
+			if (was_rebuilt)
+				continue;
+
 			space_swap_index(alter->old_space,
 					 alter->new_space,
 					 index_id(old_index),
@@ -909,6 +928,7 @@ public:
 	virtual void alter_def(struct alter_space *alter);
 	virtual void alter(struct alter_space *alter);
 	virtual void commit(struct alter_space *alter);
+	virtual bool is_rebuild(struct index_def *def);
 	virtual ~AddIndex();
 };
 
@@ -1019,6 +1039,12 @@ AddIndex::commit(struct alter_space *alter)
 {
 	Index *new_index = index_find_xc(alter->new_space, new_index_def->iid);
 	new_index->commitCreate();
+}
+
+bool
+AddIndex::is_rebuild(struct index_def *def)
+{
+	return index_def_cmp(new_index_def, def) == 0;
 }
 
 AddIndex::~AddIndex()
@@ -1330,6 +1356,27 @@ on_replace_dd_index(struct trigger * /* trigger */, void *event)
 		alter_space_add_op(alter, modify);
 		modify->new_index_def = new_index_def;
 		modify->old_index_def = old_index->index_def;
+	}
+	if (add_drop && add_add && iid == 0) {
+		/*
+		 * Rebuild all secondary non-unique tree indexes because
+		 * they implicitly depend on the order of primary index
+		 * that could change
+		 */
+		for (uint32_t i = 1; i < old_space->index_count; i++) {
+			Index *index = old_space->index[i];
+			if (index->index_def->type != TREE ||
+			    index->index_def->opts.is_unique)
+				continue;
+			struct index_def *index_def_copy =
+				index_def_dup_xc(index->index_def);
+			DropIndex *drop_index = AlterSpaceOp::create<DropIndex>();
+			alter_space_add_op(alter, drop_index);
+			drop_index->old_index_def = index->index_def;
+			AddIndex *add_index = AlterSpaceOp::create<AddIndex>();
+			alter_space_add_op(alter, add_index);
+			add_index->new_index_def = index_def_copy;
+		}
 	}
 	alter_space_do(txn, alter, old_space);
 	scoped_guard.is_active = false;
