@@ -1356,19 +1356,11 @@ on_replace_dd_index(struct trigger * /* trigger */, void *event)
 	 */
 
 	/*
-	 * All not changing indexes should be moved from a old space
-	 * to a new one, use MoveIndex item.
+	 * When the primary index is altered and must be rebuilt,
+	 * the flag below will be set and that will mean that
+	 * some secondary indexes (TREE and non-unique) must be rebuilt too.
 	 */
-	/* Create MoveIndex ops for first part of an old space indexes. */
-	uint32_t index_id;
-	for (index_id = 0; index_id < iid; ++index_id) {
-		Index *index = space_index(old_space, index_id);
-		if (index == NULL)
-			continue;
-		MoveIndex *move_index = AlterSpaceOp::create<MoveIndex>();
-		alter_space_add_op(alter, move_index);
-		move_index->index_def = index->index_def;
-	}
+	bool must_rebuild_non_unique_tree_secondary = false;
 
 	if (old_index != NULL && new_tuple == NULL) {
 		DropIndex *drop_index = AlterSpaceOp::create<DropIndex>();
@@ -1414,16 +1406,39 @@ on_replace_dd_index(struct trigger * /* trigger */, void *event)
 			rebuild_index->new_index_def = index_def;
 			rebuild_index->old_index_def = old_index->index_def;
 			index_def_guard.is_active = false;
+			must_rebuild_non_unique_tree_secondary = iid == 0;
 		}
 	}
-	/* Create MoveIndex ops for last part of an old space indexes. */
-	for (index_id = iid + 1; index_id <= old_space->index_id_max; ++index_id) {
+	/*
+	 * All not indexes that are not altered must be moved from a old space
+	 * to a new one, except a special case - when the primary index is
+	 * altered and must be rebuilt, some secondary indexes
+	 * (TREE and non-unique) must be rebuilt too.
+	 * Create MoveIndex/RebuildIndex ops for other space indexes.
+	 */
+	for (uint32_t index_id = 0;
+	     index_id <= old_space->index_id_max; ++index_id) {
+		if (index_id == iid)
+			continue;
 		Index *index = space_index(old_space, index_id);
 		if (index == NULL)
 			continue;
-		MoveIndex *move_index = AlterSpaceOp::create<MoveIndex>();
-		alter_space_add_op(alter, move_index);
-		move_index->index_def = index->index_def;
+		if (must_rebuild_non_unique_tree_secondary &&
+		    index->index_def->type == TREE &&
+		    !index->index_def->opts.is_unique) {
+			RebuildIndex *rebuild_index =
+				AlterSpaceOp::create<RebuildIndex>();
+			alter_space_add_op(alter, rebuild_index);
+			struct index_def *index_def_copy =
+				index_def_dup_xc(index->index_def);
+			rebuild_index->new_index_def = index_def_copy;
+			rebuild_index->old_index_def = index->index_def;
+		} else {
+			MoveIndex *move_index =
+				AlterSpaceOp::create<MoveIndex>();
+			alter_space_add_op(alter, move_index);
+			move_index->index_def = index->index_def;
+		}
 	}
 	alter_space_do(txn, alter, old_space);
 	scoped_guard.is_active = false;
