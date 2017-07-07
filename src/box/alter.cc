@@ -1351,6 +1351,14 @@ on_replace_dd_index(struct trigger * /* trigger */, void *event)
 	auto scoped_guard =
 		make_scoped_guard([=] { alter_space_delete(alter); });
 
+	struct index_def *index_def = NULL;
+	if (new_tuple != NULL)
+		index_def = index_def_new_from_tuple(new_tuple, old_space);
+	auto index_def_guard = make_scoped_guard([=] {
+		if (index_def != NULL)
+			index_def_delete(index_def);
+	});
+
 	/*
 	 * Handle the following 4 cases:
 	 * 1. Simple drop of an index.
@@ -1373,15 +1381,11 @@ on_replace_dd_index(struct trigger * /* trigger */, void *event)
 	if (old_index == NULL && new_tuple != NULL) {
 		CreateIndex *create_index = AlterSpaceOp::create<CreateIndex>();
 		alter_space_add_op(alter, create_index);
-		create_index->new_index_def =
-			index_def_new_from_tuple(new_tuple, old_space);
+		create_index->new_index_def = index_def;
+		index_def_guard.is_active = false;
 	}
 	/* Case 3 and 4: check if we need to rebuild index data. */
 	if (old_index != NULL && new_tuple != NULL) {
-		struct index_def *index_def;
-		index_def = index_def_new_from_tuple(new_tuple, old_space);
-		auto index_def_guard =
-			make_scoped_guard([=] { index_def_delete(index_def); });
 		if (index_def_cmp(index_def, old_index->index_def) == 0) {
 			/* Index is not changed so just move it. */
 			MoveIndex *move_index = AlterSpaceOp::create<MoveIndex>();
