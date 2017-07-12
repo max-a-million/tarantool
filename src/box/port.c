@@ -99,14 +99,14 @@ port_dump(struct port *port, struct obuf *out)
 	if (pe == NULL)
 		return 0;
 	if (tuple_to_obuf(pe->tuple, out) != 0) {
-		/*
-		 * The first port entry is pre-allocated,
-		 * no need to destroy it, only unref
-		 * the tuple.
-		 */
-		tuple_unref(pe->tuple);
-		return -1;
+		/* Destroy the port */
+		goto error;
 	}
+	/*
+	 * The first port entry is pre-allocated,
+	 * no need to destroy it, only unref
+	 * the tuple.
+	 */
 	tuple_unref(pe->tuple);
 	pe = pe->next;
 
@@ -136,7 +136,8 @@ port_dump(struct port *port, struct obuf *out)
 error:
 		tmp = pe->next;
 		tuple_unref(pe->tuple);
-		mempool_free(&port_entry_pool, pe);
+		if (pe != &port->first_entry)
+			mempool_free(&port_entry_pool, pe);
 		pe = tmp;
 	}
 	return -1;
