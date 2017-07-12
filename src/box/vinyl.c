@@ -470,7 +470,7 @@ vy_run_prepare(struct vy_index *index)
 	if (run == NULL)
 		return NULL;
 	vy_log_tx_begin();
-	vy_log_prepare_run(index->opts.lsn, run->id);
+	vy_log_prepare_run(index->space_id, index->id, run->id);
 	if (vy_log_tx_commit() < 0) {
 		vy_run_unref(run);
 		return NULL;
@@ -850,7 +850,7 @@ vy_task_dump_complete(struct vy_scheduler *scheduler, struct vy_task *task)
 		 * to log index dump anyway.
 		 */
 		vy_log_tx_begin();
-		vy_log_dump_index(index->opts.lsn, dump_lsn);
+		vy_log_dump_index(index->space_id, index->id, dump_lsn);
 		if (vy_log_tx_commit() < 0)
 			goto fail;
 		vy_run_discard(new_run);
@@ -910,7 +910,7 @@ vy_task_dump_complete(struct vy_scheduler *scheduler, struct vy_task *task)
 	 * Log change in metadata.
 	 */
 	vy_log_tx_begin();
-	vy_log_create_run(index->opts.lsn, new_run->id, dump_lsn);
+	vy_log_create_run(index->space_id, index->id, new_run->id, dump_lsn);
 	for (range = begin_range, i = 0; range != end_range;
 	     range = vy_range_tree_next(index->tree, range), i++) {
 		assert(i < index->range_count);
@@ -922,7 +922,7 @@ vy_task_dump_complete(struct vy_scheduler *scheduler, struct vy_task *task)
 		if (++loops % VY_YIELD_LOOPS == 0)
 			fiber_sleep(0); /* see comment above */
 	}
-	vy_log_dump_index(index->opts.lsn, dump_lsn);
+	vy_log_dump_index(index->space_id, index->id, dump_lsn);
 	if (vy_log_tx_commit() < 0)
 		goto fail_free_slices;
 
@@ -1234,8 +1234,8 @@ vy_task_compact_complete(struct vy_scheduler *scheduler, struct vy_task *task)
 	rlist_foreach_entry(run, &unused_runs, in_unused)
 		vy_log_drop_run(run->id, gc_lsn);
 	if (new_slice != NULL) {
-		vy_log_create_run(index->opts.lsn, new_run->id,
-				  new_run->dump_lsn);
+		vy_log_create_run(index->space_id, index->id,
+				  new_run->id, new_run->dump_lsn);
 		vy_log_insert_slice(range->id, new_run->id, new_slice->id,
 				    tuple_data_or_null(new_slice->begin),
 				    tuple_data_or_null(new_slice->end));
@@ -2520,9 +2520,8 @@ vy_index_commit_create(struct vy_env *env, struct vy_index *index)
 	 * recovery.
 	 */
 	vy_log_tx_begin();
-	vy_log_create_index(index->opts.lsn, index->id,
-			    index->space_id, index->user_key_def);
-	vy_log_insert_range(index->opts.lsn, range->id, NULL, NULL);
+	vy_log_create_index(index->space_id, index->id, index->user_key_def);
+	vy_log_insert_range(index->space_id, index->id, range->id, NULL, NULL);
 	if (vy_log_tx_try_commit() != 0)
 		say_warn("failed to log index creation: %s",
 			 diag_last_error(diag_get())->errmsg);
@@ -2578,7 +2577,7 @@ vy_index_commit_drop(struct vy_env *env, struct vy_index *index)
 
 	vy_log_tx_begin();
 	vy_log_index_prune(index, vclock_sum(&env->scheduler->last_checkpoint));
-	vy_log_drop_index(index->opts.lsn);
+	vy_log_drop_index(index->space_id, index->id);
 	if (vy_log_tx_try_commit() < 0)
 		say_warn("failed to log drop index: %s",
 			 diag_last_error(diag_get())->errmsg);
@@ -2692,8 +2691,9 @@ vy_commit_truncate_space(struct vy_env *env, struct space *old_space,
 		assert(new_index->range_count == 1);
 
 		vy_log_index_prune(old_index, gc_lsn);
-		vy_log_insert_range(new_index->opts.lsn, range->id, NULL, NULL);
-		vy_log_truncate_index(new_index->opts.lsn,
+		vy_log_insert_range(new_index->space_id, new_index->id,
+				    range->id, NULL, NULL);
+		vy_log_truncate_index(new_index->space_id, new_index->id,
 				      new_index->truncate_count);
 	}
 	if (vy_log_tx_try_commit() < 0)

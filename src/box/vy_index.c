@@ -401,27 +401,37 @@ vy_index_recovery_cb(const struct vy_log_record *record, void *cb_arg)
 
 	switch (record->type) {
 	case VY_LOG_CREATE_INDEX:
-		assert(record->index_lsn == index->opts.lsn);
+		assert(record->index_id == index->id);
+		assert(record->space_id == index->space_id);
 		index->is_committed = true;
 		break;
 	case VY_LOG_DUMP_INDEX:
-		assert(record->index_lsn == index->opts.lsn);
+		assert(record->index_id == index->id);
+		assert(record->space_id == index->space_id);
 		index->dump_lsn = record->dump_lsn;
 		break;
 	case VY_LOG_TRUNCATE_INDEX:
-		assert(record->index_lsn == index->opts.lsn);
+		assert(record->index_id == index->id);
+		assert(record->space_id == index->space_id);
 		index->truncate_count = record->truncate_count;
 		break;
 	case VY_LOG_DROP_INDEX:
-		assert(record->index_lsn == index->opts.lsn);
+		assert(record->index_id == index->id);
+		assert(record->space_id == index->space_id);
 		index->is_dropped = true;
+		/*
+		 * If the index was dropped, we don't need to replay
+		 * truncate (see vy_prepare_truncate_space()).
+		 */
+		index->truncate_count = UINT64_MAX;
 		break;
 	case VY_LOG_PREPARE_RUN:
 		break;
 	case VY_LOG_CREATE_RUN:
 		if (record->is_dropped)
 			break;
-		assert(record->index_lsn == index->opts.lsn);
+		assert(record->index_id == index->id);
+		assert(record->space_id == index->space_id);
 		run = vy_run_new(record->run_id);
 		if (run == NULL)
 			goto out;
@@ -443,7 +453,8 @@ vy_index_recovery_cb(const struct vy_log_record *record, void *cb_arg)
 	case VY_LOG_DROP_RUN:
 		break;
 	case VY_LOG_INSERT_RANGE:
-		assert(record->index_lsn == index->opts.lsn);
+		assert(record->index_id == index->id);
+		assert(record->space_id == index->space_id);
 		range = vy_range_new(record->range_id, begin, end,
 				     index->key_def);
 		if (range == NULL)
@@ -497,7 +508,7 @@ vy_index_recover(struct vy_index *index, struct vy_recovery *recovery,
 		return -1;
 	}
 
-	int rc = vy_recovery_load_index(recovery, index->opts.lsn,
+	int rc = vy_recovery_load_index(recovery, index->space_id, index->id,
 					vy_index_recovery_cb, &arg);
 
 	mh_int_t k;
@@ -507,9 +518,10 @@ vy_index_recover(struct vy_index *index, struct vy_recovery *recovery,
 			vy_index_add_run(index, run);
 		if (run->refs == 1 && rc == 0) {
 			diag_set(ClientError, ER_INVALID_VYLOG_FILE,
-				 tt_sprintf("Unused run %lld in index %lld",
+				 tt_sprintf("Unused run %lld in index %u/%u",
 					    (long long)run->id,
-					    (long long)index->opts.lsn));
+					    (unsigned)index->space_id,
+					    (unsigned)index->id));
 			rc = -1;
 			/*
 			 * Continue the loop to unreference
@@ -530,8 +542,9 @@ vy_index_recover(struct vy_index *index, struct vy_recovery *recovery,
 		/* Index was not found in the metadata log. */
 		if (!allow_missing) {
 			diag_set(ClientError, ER_INVALID_VYLOG_FILE,
-				 tt_sprintf("Index %lld not found",
-					    (long long)index->opts.lsn));
+				 tt_sprintf("Index %u/%u not found",
+					    (unsigned)index->space_id,
+					    (unsigned)index->id));
 			return -1;
 		}
 		return vy_index_init_range_tree(index);
@@ -577,8 +590,9 @@ vy_index_recover(struct vy_index *index, struct vy_recovery *recovery,
 	}
 	if (prev == NULL) {
 		diag_set(ClientError, ER_INVALID_VYLOG_FILE,
-			 tt_sprintf("Index %lld has empty range tree",
-				    (long long)index->opts.lsn));
+			 tt_sprintf("Index %u/%u has empty range tree",
+				    (unsigned)index->space_id,
+				    (unsigned)index->id));
 		return -1;
 	}
 	if (prev->end != NULL) {
@@ -932,7 +946,7 @@ vy_index_split_range(struct vy_index *index, struct vy_range *range)
 	vy_log_delete_range(range->id);
 	for (int i = 0; i < n_parts; i++) {
 		part = parts[i];
-		vy_log_insert_range(index->opts.lsn, part->id,
+		vy_log_insert_range(index->space_id, index->id, part->id,
 				    tuple_data_or_null(part->begin),
 				    tuple_data_or_null(part->end));
 		rlist_foreach_entry(slice, &part->slices, in_range)
@@ -999,7 +1013,7 @@ vy_index_coalesce_range(struct vy_index *index, struct vy_range *range)
 	 * Log change in metadata.
 	 */
 	vy_log_tx_begin();
-	vy_log_insert_range(index->opts.lsn, result->id,
+	vy_log_insert_range(index->space_id, index->id, result->id,
 			    tuple_data_or_null(result->begin),
 			    tuple_data_or_null(result->end));
 	for (it = first; it != end; it = vy_range_tree_next(index->tree, it)) {
