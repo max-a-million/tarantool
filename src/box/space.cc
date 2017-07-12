@@ -131,7 +131,29 @@ space_new(struct space_def *def, struct rlist *key_list)
 	 */
 	uint32_t key_no = 0;
 	rlist_foreach_entry(index_def, key_list, link) {
-		keys[index_def == pk ? 0 : ++key_no] = &index_def->key_def;
+		if (index_def == pk)
+			keys[0] = &index_def->key_def;
+		else if (engine->id == 0 && index_def->type == TREE &&
+			!index_def->opts.is_unique) {
+			/*
+			 * Memtx tree will use its own key_def different
+			 * from index_def->key_def. We have to create similar
+			 * temporary key_def and pass it to tuple_format_new
+			 * in order to create proper field map.
+			 */
+			struct key_def *tree_key_def =
+				key_def_merge(&index_def->key_def,
+					      &pk->key_def);
+			size_t key_def_size =
+				key_def_sizeof(tree_key_def->part_count);
+			struct key_def *key_def = (struct key_def *)
+				region_alloc_xc(&fiber()->gc, key_def_size);
+			memcpy(key_def, tree_key_def, key_def_size);
+			free(tree_key_def);
+			keys[++key_no] = key_def;
+		} else {
+			keys[++key_no] = &index_def->key_def;
+		}
 	}
 	/** Tuple format must be created before any other index. */
 	space->format = tuple_format_new(engine->format, keys, index_count, 0);
