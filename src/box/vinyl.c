@@ -137,6 +137,13 @@ struct vy_env {
 	struct vy_recovery *recovery;
 	/** Local recovery vclock. */
 	const struct vclock *recovery_vclock;
+	/**
+	 * LSN to assign to the next statement on initial join.
+	 * We can't use original statements' LSNs, because we
+	 * send statements not in the chronological order while
+	 * the receiving end expects LSNs to grow monotonically.
+	 */
+	int64_t join_lsn;
 };
 
 /** Mask passed to vy_gc(). */
@@ -3872,6 +3879,9 @@ vy_prepare(struct vy_env *env, struct vy_tx *tx)
 void
 vy_commit(struct vy_env *env, struct vy_tx *tx, int64_t lsn)
 {
+	if (unlikely(env->status == VINYL_INITIAL_RECOVERY_REMOTE))
+		lsn = ++env->join_lsn;
+
 	/*
 	 * vy_tx_commit() may trigger an upsert squash.
 	 * If there is no memory for a created statement,
@@ -5573,16 +5583,6 @@ struct vy_join_ctx {
 	 * is to the head of the list.
 	 */
 	struct rlist slices;
-	/**
-	 * LSN to assign to the next statement.
-	 *
-	 * We can't use original statements' LSNs, because we
-	 * send statements not in the chronological order while
-	 * the receiving end expects LSNs to grow monotonically
-	 * due to the design of the lsregion allocator, which is
-	 * used for storing statements in memory.
-	 */
-	int64_t lsn;
 };
 
 static int
@@ -5602,7 +5602,6 @@ vy_send_range_f(struct cbus_call_msg *cmsg)
 		if (rc != 0)
 			break;
 		/* See comment to vy_join_ctx::lsn. */
-		xrow.lsn = ++ctx->lsn;
 		rc = xstream_write(ctx->stream, &xrow);
 		if (rc != 0)
 			break;
