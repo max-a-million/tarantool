@@ -22,139 +22,139 @@
 void
 test_errors()
 {
-        plan(2);
+	plan(2);
 
-        int test_1[] = { 5, 1, 1, 1, 0 };
-        is(1, bitvec_test(400, test_1), "error test");
-        int test_2[] = { 5, 1, 234, 1, 0 };
-        is(234, bitvec_test(400, test_2), "error test");
+	int test_1[] = { 5, 1, 1, 1, 0 };
+	is(1, bitvec_test(400, test_1), "error test");
+	int test_2[] = { 5, 1, 234, 1, 0 };
+	is(234, bitvec_test(400, test_2), "error test");
 
-        check_plan();
+	check_plan();
 }
 
 void
 test_various_sizes()
 {
-        plan(4);
+	plan(4);
 
-        int i = 0;
-        int sz_args[] = { 400, 4000, 40000, 400000 };
+	int i = 0;
+	int sz_args[] = { 400, 4000, 40000, 400000 };
 
-        int test_args[][5] = {
-                { 1, 400, 1, 1, 0 },
-                { 1, 4000, 1, 1, 0 },
-                { 1, 40000, 1, 1, 0 },
-                { 1, 400000, 1, 1, 0 }
-        };
+	int test_args[][5] = {
+		{ 1, 400, 1, 1, 0 },
+		{ 1, 4000, 1, 1, 0 },
+		{ 1, 40000, 1, 1, 0 },
+		{ 1, 400000, 1, 1, 0 }
+	};
 
-        for (i = 0; i < 4; i++) {
-               is(0, bitvec_test(sz_args[i], test_args[i]), "various sizes");
-        }
+	for (i = 0; i < 4; i++) {
+	       is(0, bitvec_test(sz_args[i], test_args[i]), "various sizes");
+	}
 
-        check_plan();
+	check_plan();
 }
 
 
 void
 test_larger_increments()
 {
-        plan(4);
+	plan(4);
 
-        int i = 0;
-        int sz_args[] = { 400, 4000, 40000, 400000 };
+	int i = 0;
+	int sz_args[] = { 400, 4000, 40000, 400000 };
 
-        int test_args[][5] = {
-                { 1, 400, 1, 7, 0},
-                { 1, 4000, 1, 7, 0},
-                { 1,  40000, 1, 7, 0},
-                { 1, 400000, 1, 7, 0}
-        };
+	int test_args[][5] = {
+		{ 1, 400, 1, 7, 0},
+		{ 1, 4000, 1, 7, 0},
+		{ 1,  40000, 1, 7, 0},
+		{ 1, 400000, 1, 7, 0}
+	};
 
 
-        for (i = 0; i < 4; i++) {
-                is(0, bitvec_test(sz_args[i], test_args[i]), "larger increments");
-        }
+	for (i = 0; i < 4; i++) {
+		is(0, bitvec_test(sz_args[i], test_args[i]), "larger increments");
+	}
 
-        check_plan();
+	check_plan();
 }
 
 void
 test_clearing_mechanism()
 {
-        plan(9);
+	plan(9);
 
-        int i = 0;
-        int sz_args[] = { 400, 4000, 40000, 400000, 400, 4000, 40000, 400000, 5000 };
+	int i = 0;
+	int sz_args[] = { 400, 4000, 40000, 400000, 400, 4000, 40000, 400000, 5000 };
 
-        int test_args[][9] = {
-                {1, 400, 1, 1, 2, 400, 1, 1, 0},
-                {1, 4000, 1, 1, 2, 4000, 1, 1, 0},
-                {1, 40000, 1, 1, 2, 40000, 1, 1, 0},
-                {1, 400000, 1, 1, 2, 400000, 1, 1, 0},
-                {1, 400, 1, 1, 2, 400, 1, 7, 0},
-                {1, 4000, 1, 1, 2, 4000, 1, 7, 0},
-                {1, 40000, 1, 1, 2, 40000, 1, 7, 0},
-                {1, 400000, 1, 1, 2, 400000, 1, 7, 0},
-                {1, 5000, 100000, 1, 2, 400000, 1, 37, 0}
-        };
+	int test_args[][9] = {
+		{1, 400, 1, 1, 2, 400, 1, 1, 0},
+		{1, 4000, 1, 1, 2, 4000, 1, 1, 0},
+		{1, 40000, 1, 1, 2, 40000, 1, 1, 0},
+		{1, 400000, 1, 1, 2, 400000, 1, 1, 0},
+		{1, 400, 1, 1, 2, 400, 1, 7, 0},
+		{1, 4000, 1, 1, 2, 4000, 1, 7, 0},
+		{1, 40000, 1, 1, 2, 40000, 1, 7, 0},
+		{1, 400000, 1, 1, 2, 400000, 1, 7, 0},
+		{1, 5000, 100000, 1, 2, 400000, 1, 37, 0}
+	};
 
-        for (i = 0; i < 9; i++) {
-                is(0, bitvec_test(sz_args[i], test_args[i]), "clearing mechanism");
-        }
+	for (i = 0; i < 9; i++) {
+		is(0, bitvec_test(sz_args[i], test_args[i]), "clearing mechanism");
+	}
 
-        check_plan();
+	check_plan();
 }
 
 void
 test_hashing_collisions()
 {
-        plan(10);
+	plan(10);
 
-        int start_values[] = { 1, 8, 1 };
-        int incr_values[] = { 124, 125, 1 };
-        int i, j;
+	int start_values[] = { 1, 8, 1 };
+	int incr_values[] = { 124, 125, 1 };
+	int i, j;
 
-        for (i = 0; i < 3; i++) {
-                for (j = 0; j < 3; j++) {
-                        int test_20[] = { 1, 60, i, j, 2, 5000, 1, 1, 0 };
-                        is(0, bitvec_test(5000, test_20), "hashing collisions");
-                }
-        }
+	for (i = 0; i < 3; i++) {
+		for (j = 0; j < 3; j++) {
+			int test_20[] = { 1, 60, i, j, 2, 5000, 1, 1, 0 };
+			is(0, bitvec_test(5000, test_20), "hashing collisions");
+		}
+	}
 
-        int test_30[] = {1, 17000000, 1, 1, 2, 17000000, 1, 1, 0};
-        is(0, bitvec_test(17000000, test_30), "hashing collisions");
+	int test_30[] = {1, 17000000, 1, 1, 2, 17000000, 1, 1, 0};
+	is(0, bitvec_test(17000000, test_30), "hashing collisions");
 
-        check_plan();
+	check_plan();
 }
 
 void
 test_random_subsets()
 {
-        plan(7);
+	plan(7);
 
-        int test_31[] = {3, 2000, 4, 2000, 0};
-        is(0, bitvec_test(4000, test_31), "random subsets");
+	int test_31[] = {3, 2000, 4, 2000, 0};
+	is(0, bitvec_test(4000, test_31), "random subsets");
 
-        int test_32[] = {3, 1000, 4, 1000, 3, 1000, 4, 1000, 3, 1000, 4,
-                         1000, 3, 1000, 4, 1000, 3, 1000, 4, 1000, 3, 1000, 4, 1000, 0};
-        is(0, bitvec_test(4000, test_32), "random subsets");
+	int test_32[] = {3, 1000, 4, 1000, 3, 1000, 4, 1000, 3, 1000, 4,
+			 1000, 3, 1000, 4, 1000, 3, 1000, 4, 1000, 3, 1000, 4, 1000, 0};
+	is(0, bitvec_test(4000, test_32), "random subsets");
 
-        int test_33[] = {3, 10, 0};
-        is(0, bitvec_test(400000, test_33), "random subsets");
+	int test_33[] = {3, 10, 0};
+	is(0, bitvec_test(400000, test_33), "random subsets");
 
-        int test_34[] = {3, 10, 2, 4000, 1, 1, 0};
-        is(0, bitvec_test(4000, test_34), "random subsets");
+	int test_34[] = {3, 10, 2, 4000, 1, 1, 0};
+	is(0, bitvec_test(4000, test_34), "random subsets");
 
-        int test_35[] = {3, 20, 2, 5000, 1, 1, 0};
-        is(0, bitvec_test(5000, test_35), "random subsets");
+	int test_35[] = {3, 20, 2, 5000, 1, 1, 0};
+	is(0, bitvec_test(5000, test_35), "random subsets");
 
-        int test_36[] = {3, 60, 2, 50000, 1, 1, 0};
-        is(0, bitvec_test(50000, test_36), "random subsets");
+	int test_36[] = {3, 60, 2, 50000, 1, 1, 0};
+	is(0, bitvec_test(50000, test_36), "random subsets");
 
-        int test_37[] = {1, 25, 121, 125, 1, 50, 121, 125, 2, 25, 121, 125, 0};
-        is(0, bitvec_test(5000, test_37), "random subsets");
+	int test_37[] = {1, 25, 121, 125, 1, 50, 121, 125, 2, 25, 121, 125, 0};
+	is(0, bitvec_test(5000, test_37), "random subsets");
 
-        check_plan();
+	check_plan();
 }
 
 /*
@@ -210,27 +210,27 @@ end
 void
 run_tests(void)
 {
-        header();
+	header();
 
-        test_errors();
-        test_various_sizes();
-        test_larger_increments();
-        test_clearing_mechanism();
-        test_random_subsets();
+	test_errors();
+	test_various_sizes();
+	test_larger_increments();
+	test_clearing_mechanism();
+	test_random_subsets();
 
-        footer();
+	footer();
 }
 
 int
 main(void)
 {
-        sqlite3MutexInit();
-        sqlite3MallocInit();
+	sqlite3MutexInit();
+	sqlite3MallocInit();
 
-        run_tests();
+	run_tests();
 
-        sqlite3MallocEnd();
-        sqlite3MutexEnd();
+	sqlite3MallocEnd();
+	sqlite3MutexEnd();
 
-        return 0;
+	return 0;
 }
