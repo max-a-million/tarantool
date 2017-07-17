@@ -105,6 +105,13 @@ port_dump(struct port *port, struct obuf *out)
 		 * the tuple.
 		 */
 		tuple_unref(pe->tuple);
+		/*
+		 * In case of error the dump must destroy the
+		 * port.
+		 */
+		pe = pe->next;
+		if (pe != NULL)
+			goto error;
 		return -1;
 	}
 	tuple_unref(pe->tuple);
