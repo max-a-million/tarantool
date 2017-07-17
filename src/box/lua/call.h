@@ -45,16 +45,19 @@ box_lua_call_init(struct lua_State *L);
 
 struct request;
 struct obuf;
+struct box_lua_ctx;
 
 /**
  * Invoke a Lua stored procedure from the binary protocol
  * (implementation of 'CALL' command code).
  */
 int
-box_lua_call(struct request *request, struct obuf *out);
+box_lua_call(struct request *request, struct obuf *out,
+	     struct box_lua_ctx *prepare_ctx);
 
 int
-box_lua_eval(struct request *request, struct obuf *out);
+box_lua_eval(struct request *request, struct obuf *out,
+	     struct box_lua_ctx *prepare_ctx);
 
 #if defined(__cplusplus)
 } /* extern "C" */

@@ -29,6 +29,7 @@
  * SUCH DAMAGE.
  */
 #include "box/lua/call.h"
+#include "box/box.h"
 #include "box/error.h"
 #include "fiber.h"
 
@@ -248,6 +249,11 @@ struct lua_function_ctx {
 	struct obuf_svp svp;
 	/* true if `out' was changed and `svp' can be used for rollback  */
 	bool out_is_dirty;
+	/**
+	 * Callback to call after pushing lua args onto stack and
+	 * before lua call.
+	 */
+	struct box_lua_ctx *prepare_ctx;
 };
 
 /**
@@ -279,6 +285,7 @@ execute_lua_call(lua_State *L)
 
 	for (uint32_t i = 0; i < arg_count; i++)
 		luamp_decode(L, luaL_msgpack_default, &args);
+	box_lua_prepare(ctx->prepare_ctx);
 	lua_call(L, arg_count + oc - 1, LUA_MULTRET);
 
 	/**
@@ -354,6 +361,7 @@ execute_lua_eval(lua_State *L)
 	}
 
 	/* Call compiled code */
+	box_lua_prepare(ctx->prepare_ctx);
 	lua_call(L, arg_count, LUA_MULTRET);
 
 	/* Send results of the called procedure to the client. */
@@ -375,9 +383,11 @@ execute_lua_eval(lua_State *L)
 }
 
 static inline int
-box_process_lua(struct request *request, struct obuf *out, lua_CFunction handler)
+box_process_lua(struct request *request, struct obuf *out,
+		struct box_lua_ctx *prepare_ctx, lua_CFunction handler)
 {
-	struct lua_function_ctx ctx = { request, out, {0, 0, 0}, false };
+	struct lua_function_ctx ctx =
+		{ request, out, {0, 0, 0}, false, prepare_ctx };
 
 	lua_State *L = lua_newthread(tarantool_L);
 	int coro_ref = luaL_ref(tarantool_L, LUA_REGISTRYINDEX);
@@ -402,15 +412,17 @@ box_process_lua(struct request *request, struct obuf *out, lua_CFunction handler
 }
 
 int
-box_lua_call(struct request *request, struct obuf *out)
+box_lua_call(struct request *request, struct obuf *out,
+	     struct box_lua_ctx *prepare_ctx)
 {
-	return box_process_lua(request, out, execute_lua_call);
+	return box_process_lua(request, out, prepare_ctx, execute_lua_call);
 }
 
 int
-box_lua_eval(struct request *request, struct obuf *out)
+box_lua_eval(struct request *request, struct obuf *out,
+	     struct box_lua_ctx *prepare_ctx)
 {
-	return box_process_lua(request, out, execute_lua_eval);
+	return box_process_lua(request, out, prepare_ctx, execute_lua_eval);
 }
 
 static const struct luaL_Reg boxlib_internal[] = {

@@ -1019,7 +1019,8 @@ error:
 }
 
 void
-box_process_call(struct request *request, struct obuf *out)
+box_process_call(struct request *request, struct obuf *out,
+		 struct box_lua_ctx *prepare_ctx)
 {
 	rmean_collect(rmean_box, IPROTO_CALL, 1);
 	/**
@@ -1061,7 +1062,7 @@ box_process_call(struct request *request, struct obuf *out)
 	if (func && func->def->language == FUNC_LANGUAGE_C) {
 		rc = func_call(func, request, out);
 	} else {
-		rc = box_lua_call(request, out);
+		rc = box_lua_call(request, out, prepare_ctx);
 	}
 	/* Restore the original user */
 	if (orig_credentials)
@@ -1081,12 +1082,13 @@ box_process_call(struct request *request, struct obuf *out)
 }
 
 void
-box_process_eval(struct request *request, struct obuf *out)
+box_process_eval(struct request *request, struct obuf *out,
+		 struct box_lua_ctx *prepare_ctx)
 {
 	rmean_collect(rmean_box, IPROTO_EVAL, 1);
 	/* Check permissions */
 	access_check_universe(PRIV_X);
-	if (box_lua_eval(request, out) != 0) {
+	if (box_lua_eval(request, out, prepare_ctx) != 0) {
 		txn_rollback();
 		diag_raise();
 	}

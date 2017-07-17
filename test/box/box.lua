@@ -5,6 +5,7 @@ box.cfg{
     listen              = os.getenv("LISTEN"),
     memtx_memory        = 107374182,
     pid_file            = "tarantool.pid",
+    readahead           = 5000,
 }
 
 require('console').listen(os.getenv('ADMIN'))

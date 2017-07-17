@@ -68,8 +68,21 @@ enum { IPROTO_MSG_MAX = 768 };
  * from all connections are queued into a single queue
  * and processed in FIFO order.
  */
-struct iproto_msg: public cmsg
+struct iproto_msg
 {
+	/** Main cmsg used for request execution. */
+	struct cmsg base;
+	/**
+	 * CMsg used to notify the IProto thread from the TX
+	 * thread about discarding ibuf data of this message. It
+	 * is possible, when all i-buffered data is not needed
+	 * anymore in the TX thread. It allows to reuse the freed
+	 * memory for newer messages (see for example gh-946).
+	 * TX cannot modify ibuf in self, because ibuf is managed
+	 * from IProto thread.
+	 */
+	struct cmsg ibuf_gc;
+
 	struct iproto_connection *connection;
 
 	/* --- Box msgs - actual requests for the transaction processor --- */
@@ -118,7 +131,7 @@ iproto_resume();
 
 
 static inline void
-iproto_msg_delete(struct cmsg *msg)
+iproto_msg_delete(struct iproto_msg *msg)
 {
 	mempool_free(&iproto_msg_pool, msg);
 	iproto_resume();
@@ -221,6 +234,36 @@ struct iproto_connection
 	struct iproto_msg *disconnect;
 	struct rlist in_stop_list;
 };
+
+/**
+ * Discard the ibuffered data of the iproto msg.
+ * @param m iproto_msg.ibuf_gc message.
+ */
+static inline void
+net_gc_ibuf(struct cmsg *m)
+{
+	struct iproto_msg *msg = container_of(m, struct iproto_msg, ibuf_gc);
+	/* Discard request (see iproto_enqueue_batch()). */
+	msg->iobuf->in.rpos += msg->len;
+	/*
+	 * Do not discard twice, if the net_gc_ibuf was called
+	 * explicitly from net_send_msg.
+	 */
+	msg->len = 0;
+}
+
+/**
+ * Callback for box_lua_call/eval prepare. After lua args are
+ * pushed onto stack, the ibuffered data can be discarded via
+ * net_gc_ibuf called from cbus in IProto thread.
+ */
+static void
+net_gc_ibuf_cb(void *arg)
+{
+	struct cmsg *msg = (struct cmsg *) arg;
+	cpipe_push_input(&net_pipe, msg);
+	cpipe_flush_input(&net_pipe);
+}
 
 static struct mempool iproto_connection_pool;
 static RLIST_HEAD(stopped_connections);
@@ -428,6 +471,10 @@ static const struct cmsg_hop process1_route[] = {
 	{ net_send_msg, NULL },
 };
 
+static const struct cmsg_hop ibuf_gc_route[] = {
+	{ net_gc_ibuf, NULL },
+};
+
 static const struct cmsg_hop *dml_route[IPROTO_TYPE_STAT_MAX] = {
 	NULL,                                   /* IPROTO_OK */
 	select_route,                           /* IPROTO_SELECT */
@@ -464,7 +511,7 @@ iproto_connection_new(const char *name, int fd)
 	rlist_create(&con->in_stop_list);
 	/* It may be very awkward to allocate at close. */
 	con->disconnect = iproto_msg_new(con);
-	cmsg_init(con->disconnect, disconnect_route);
+	cmsg_init(&con->disconnect->base, disconnect_route);
 	return con;
 }
 
@@ -509,7 +556,7 @@ iproto_connection_close(struct iproto_connection *con)
 		assert(con->disconnect != NULL);
 		struct iproto_msg *msg = con->disconnect;
 		con->disconnect = NULL;
-		cpipe_push(&tx_pipe, msg);
+		cpipe_push(&tx_pipe, &msg->base);
 	}
 	rlist_del(&con->in_stop_list);
 }
@@ -643,14 +690,15 @@ iproto_decode_msg(struct iproto_msg *msg, const char **pos, const char *reqend,
 				 msg->header.body[0].iov_len,
 				 request_key_map(msg->header.type));
 		assert(msg->header.type < sizeof(dml_route)/sizeof(*dml_route));
-		cmsg_init(msg, dml_route[msg->header.type]);
+		cmsg_init(&msg->base, dml_route[msg->header.type]);
+		cmsg_init(&msg->ibuf_gc, ibuf_gc_route);
 		break;
 	case IPROTO_PING:
-		cmsg_init(msg, misc_route);
+		cmsg_init(&msg->base, misc_route);
 		break;
 	case IPROTO_JOIN:
 	case IPROTO_SUBSCRIBE:
-		cmsg_init(msg, sync_route);
+		cmsg_init(&msg->base, sync_route);
 		*stop_input = true;
 		break;
 	default:
@@ -692,7 +740,7 @@ iproto_enqueue_batch(struct iproto_connection *con, struct ibuf *in)
 			 * This can't throw, but should not be
 			 * done in case of exception.
 			 */
-			cpipe_push_input(&tx_pipe, msg);
+			cpipe_push_input(&tx_pipe, &msg->base);
 			guard.is_active = false;
 			n_requests++;
 		} catch (Exception *e) {
@@ -1001,6 +1049,8 @@ tx_process_misc(struct cmsg *m)
 {
 	struct iproto_msg *msg = (struct iproto_msg *) m;
 	struct obuf *out = &msg->iobuf->out;
+	struct box_lua_ctx lua_ctx =
+		{ net_gc_ibuf_cb, (void *)&msg->ibuf_gc };
 
 	tx_fiber_init(msg->connection->session, msg->header.sync);
 
@@ -1012,11 +1062,11 @@ tx_process_misc(struct cmsg *m)
 		case IPROTO_CALL:
 		case IPROTO_CALL_16:
 			assert(msg->request.type == msg->header.type);
-			box_process_call(&msg->request, out);
+			box_process_call(&msg->request, out, &lua_ctx);
 			break;
 		case IPROTO_EVAL:
 			assert(msg->request.type == msg->header.type);
-			box_process_eval(&msg->request, out);
+			box_process_eval(&msg->request, out, &lua_ctx);
 			break;
 		case IPROTO_AUTH:
 			assert(msg->request.type == msg->header.type);
@@ -1084,8 +1134,7 @@ net_send_msg(struct cmsg *m)
 	struct iproto_msg *msg = (struct iproto_msg *) m;
 	struct iproto_connection *con = msg->connection;
 	struct iobuf *iobuf = msg->iobuf;
-	/* Discard request (see iproto_enqueue_batch()) */
-	iobuf->in.rpos += msg->len;
+	net_gc_ibuf(&msg->ibuf_gc);
 	iobuf->out.wend = msg->write_end;
 
 	if (evio_has_fd(&con->output)) {
@@ -1213,10 +1262,10 @@ iproto_on_accept(struct evio_service * /* service */, int fd,
 	 * use, all stored in just a few blocks of the memory pool.
 	 */
 	struct iproto_msg *msg = iproto_msg_new(con);
-	cmsg_init(msg, connect_route);
+	cmsg_init(&msg->base, connect_route);
 	msg->iobuf = con->iobuf[0];
 	msg->close_connection = false;
-	cpipe_push(&tx_pipe, msg);
+	cpipe_push(&tx_pipe, &msg->base);
 }
 
 static struct evio_service binary; /* iproto binary listener */

@@ -51,7 +51,7 @@ cfg_filter(box.cfg)
   - - read_only
     - false
   - - readahead
-    - 16320
+    - 5000
   - - rows_per_wal
     - 500000
   - - slab_alloc_factor

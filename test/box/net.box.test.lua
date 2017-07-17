@@ -746,3 +746,26 @@ c.space.test.connection == c
 
 c:close()
 space:drop()
+
+--
+-- gh-946 about connection stuck in a long calls.
+--
+box.schema.user.grant('guest', 'read,write,execute', 'universe');
+c = net.connect(box.cfg.listen)
+c:ping()
+
+long = string.rep('a', 20000)
+function long_call(param) fiber.sleep(100000) return 'ok' end
+function normal_call(param) return 'fast_ok' end
+function net_long_call() c:call('long_call', {long}) end
+function net_normal_call() c:call('normal_call') end
+f1 = fiber.create(net_long_call)
+while f1:status() ~= 'suspended' do fiber.sleep(0) end
+f2 = fiber.create(net_long_call)
+while f2:status() ~= 'suspended' do fiber.sleep(0) end
+c:call('normal_call') -- Must not hang.
+f1:status()
+f2:status()
+
+c:close()
+box.schema.user.revoke('guest', 'read,write,execute', 'universe')

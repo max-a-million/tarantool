@@ -121,6 +121,30 @@ box_backup_stop(void);
  */
 const char *box_status(void);
 
+typedef void (*box_prepare_lua_cb)(void *arg);
+
+/**
+ * Context of lua call/eval.
+ */
+struct box_lua_ctx {
+	/**
+	 * Prepare callback is called right after lua args are
+	 * pushed onto stack, and before lua call.
+	 */
+	box_prepare_lua_cb prepare_cb;
+	void *prepare_arg;
+};
+
+/**
+ * Call prepare callback by the specified lua context.
+ * @param ctx Lua call/eval context.
+ */
+static inline void
+box_lua_prepare(struct box_lua_ctx *ctx)
+{
+	ctx->prepare_cb(ctx->prepare_arg);
+}
+
 #if defined(__cplusplus)
 } /* extern "C" */
 
@@ -128,10 +152,12 @@ void
 box_process_auth(struct request *request, struct obuf *out);
 
 void
-box_process_call(struct request *request, struct obuf *out);
+box_process_call(struct request *request, struct obuf *out,
+		 struct box_lua_ctx *prepare_ctx);
 
 void
-box_process_eval(struct request *request, struct obuf *out);
+box_process_eval(struct request *request, struct obuf *out,
+		 struct box_lua_ctx *prepare_ctx);
 
 void
 box_process_join(struct ev_io *io, struct xrow_header *header);
