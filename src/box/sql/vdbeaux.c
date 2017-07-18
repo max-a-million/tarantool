@@ -2765,14 +2765,12 @@ int sqlite3VdbeHalt(Vdbe *p){
     /* If this was an INSERT, UPDATE or DELETE and no statement transaction
     ** has been rolled back, update the database connection change-counter. 
     */
-    if( p->changeCntOn ){
-      if( eStatementOp!=SAVEPOINT_ROLLBACK ){
-        sqlite3VdbeSetChanges(db, p->nChange);
-      }else{
-        sqlite3VdbeSetChanges(db, 0);
-      }
-      p->nChange = 0;
+    if( eStatementOp!=SAVEPOINT_ROLLBACK ){
+      sqlite3VdbeSetChanges(db, p->nChange);
+    }else{
+      sqlite3VdbeSetChanges(db, 0);
     }
+    p->nChange = 0;
 
     /* Release the locks */
     sqlite3VdbeLeave(p);
@@ -4239,14 +4237,6 @@ void sqlite3VdbeSetChanges(sqlite3 *db, int nChange){
   assert( sqlite3_mutex_held(db->mutex) );
   db->nChange = nChange;
   db->nTotalChange += nChange;
-}
-
-/*
-** Set a flag in the vdbe to update the change counter when it is finalised
-** or reset.
-*/
-void sqlite3VdbeCountChanges(Vdbe *v){
-  v->changeCntOn = 1;
 }
 
 /*

@@ -301,7 +301,6 @@ void sqlite3Update(
   /* Begin generating code. */
   v = sqlite3GetVdbe(pParse);
   if( v==0 ) goto update_cleanup;
-  if( pParse->nested==0 ) sqlite3VdbeCountChanges(v);
   sqlite3BeginWriteOperation(pParse, 1, iDb);
 
   /* Allocate required registers. */

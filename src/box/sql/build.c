@@ -1830,6 +1830,7 @@ static void createIndex(
   sqlite3VdbeAddOp4(v, OP_Blob, zPartsSz, iFirstCol+5, MSGPACK_SUBTYPE, zParts, P4_STATIC);
   sqlite3VdbeAddOp3(v, OP_MakeRecord, iFirstCol, 6, iRecord);
   sqlite3VdbeAddOp4Int(v, OP_IdxInsert, iCursor, iRecord, iFirstCol, 6);
+  sqlite3VdbeChangeP5(v, OPFLAG_NCHANGE);
   sqlite3TableAffinity(v, pSysIndex, 0);
 }
 
@@ -1932,6 +1933,7 @@ static void createSpace(
   sqlite3VdbeAddOp4(v, OP_Blob, zFormatSz, iFirstCol+6, MSGPACK_SUBTYPE, zFormat, P4_STATIC);
   sqlite3VdbeAddOp3(v, OP_MakeRecord, iFirstCol, 7, iRecord);
   sqlite3VdbeAddOp4Int(v, OP_IdxInsert, iCursor, iRecord, iFirstCol, 7);
+  sqlite3VdbeChangeP5(v, OPFLAG_NCHANGE);
   sqlite3TableAffinity(v, pSysSpace, 0);
 }
 

@@ -354,6 +354,7 @@ void sqlite3FinishTrigger(
     sqlite3VdbeAddOp4(v, OP_Blob, zOptsSz, iFirstCol+1, MSGPACK_SUBTYPE, zOpts, P4_DYNAMIC);
     sqlite3VdbeAddOp3(v, OP_MakeRecord, iFirstCol, 2, iRecord);
     sqlite3VdbeAddOp4Int(v, OP_IdxInsert, iCursor, iRecord, iFirstCol, 7);
+    sqlite3VdbeChangeP5(v, OPFLAG_NCHANGE);
     sqlite3VdbeAddOp1(v, OP_Close, iCursor);
 
     /* parseschema3(reg(iFirstCol), ref(iFirstCol)+1) */

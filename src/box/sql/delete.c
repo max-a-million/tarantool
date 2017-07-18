@@ -316,7 +316,6 @@ void sqlite3DeleteFrom(
   if( v==0 ){
     goto delete_from_cleanup;
   }
-  if( pParse->nested==0 ) sqlite3VdbeCountChanges(v);
   sqlite3BeginWriteOperation(pParse, 1, iDb);
 
   /* If we are trying to delete from a view, realize that view into
@@ -519,7 +518,6 @@ void sqlite3DeleteFrom(
     }else
 #endif
     {
-      int count = (pParse->nested==0);    /* True to count changes */
       int iIdxNoSeek = -1;
       if( bComplex==0 && aiCurOnePass[1]!=iDataCur
 	  /* Tarantool: as far as ONEPASS is disabled, there's no index
@@ -528,7 +526,7 @@ void sqlite3DeleteFrom(
         iIdxNoSeek = aiCurOnePass[1];
       }
       sqlite3GenerateRowDelete(pParse, pTab, pTrigger, iDataCur, iIdxCur,
-          iKey, nKey, count, OE_Default, eOnePass, iIdxNoSeek);
+          iKey, nKey, OE_Default, eOnePass, iIdxNoSeek);
     }
   
     /* End of the loop over all rowids/primary-keys. */
@@ -626,7 +624,6 @@ void sqlite3GenerateRowDelete(
   int iIdxCur,       /* First index cursor */
   int iPk,           /* First memory cell containing the PRIMARY KEY */
   i16 nPk,           /* Number of PRIMARY KEY memory cells */
-  u8 count,          /* If non-zero, increment the row change counter */
   u8 onconf,         /* Default ON CONFLICT policy for triggers */
   u8 eMode,          /* ONEPASS_OFF, _SINGLE, or _MULTI.  See above */
   int iIdxNoSeek     /* Cursor number of cursor that does not need seeking */
@@ -705,18 +702,12 @@ void sqlite3GenerateRowDelete(
   /* Delete the index and table entries. Skip this step if pTab is really
   ** a view (in which case the only effect of the DELETE statement is to
   ** fire the INSTEAD OF triggers).  
-  **
-  ** If variable 'count' is non-zero, then this OP_Delete instruction should
-  ** invoke the update-hook. The pre-update-hook, on the other hand should
-  ** be invoked unless table pTab is a system table. The difference is that
-  ** the update-hook is not invoked for rows removed by REPLACE, but the 
-  ** pre-update-hook is.
   */ 
   if( pTab->pSelect==0 ){
     u8 p5 = 0;
     /* kyukhin: Tarantool handles indices uypdate automatically.  */
     /* sqlite3GenerateRowIndexDelete(pParse, pTab, iDataCur, iIdxCur,0,iIdxNoSeek);  */
-    sqlite3VdbeAddOp2(v, OP_Delete, iDataCur, (count?OPFLAG_NCHANGE:0));
+    sqlite3VdbeAddOp2(v, OP_Delete, iDataCur, OPFLAG_NCHANGE);
     sqlite3VdbeAppendP4(v, (char*)pTab, P4_TABLE);
     if( eMode!=ONEPASS_OFF ){
       sqlite3VdbeChangeP5(v, OPFLAG_AUXDELETE);

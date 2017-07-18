@@ -588,7 +588,6 @@ void sqlite3Insert(
   */
   v = sqlite3GetVdbe(pParse);
   if( v==0 ) goto insert_cleanup;
-  if( pParse->nested==0 ) sqlite3VdbeCountChanges(v);
   sqlite3BeginWriteOperation(pParse, pSelect || pTrigger, iDb);
 
 #ifndef SQLITE_OMIT_XFER_OPT
@@ -1440,7 +1439,7 @@ void sqlite3GenerateConstraintChecks(
         if( pTrigger || sqlite3FkRequired(pParse, pTab, 0, 0) ){
           sqlite3MultiWrite(pParse);
           sqlite3GenerateRowDelete(pParse, pTab, pTrigger, iDataCur, iIdxCur,
-                                   regNewData, 1, 0, OE_Replace, 1, -1);
+                                   regNewData, 1, OE_Replace, 1, -1);
         }else{
 #ifdef SQLITE_ENABLE_PREUPDATE_HOOK
           if( HasRowid(pTab) ){
@@ -1657,7 +1656,7 @@ void sqlite3GenerateConstraintChecks(
           pTrigger = sqlite3TriggersExist(pParse, pTab, TK_DELETE, 0, 0);
         }
         sqlite3GenerateRowDelete(pParse, pTab, pTrigger, iDataCur, iIdxCur,
-            regR, nPkField, 0, OE_Replace,
+            regR, nPkField, OE_Replace,
             (pIdx==pPk ? ONEPASS_SINGLE : ONEPASS_OFF), -1);
         seenReplace = 1;
         break;
@@ -1738,10 +1737,8 @@ void sqlite3CompleteInsertion(
     sqlite3TableAffinity(v, pTab, 0);
     sqlite3ExprCacheAffinityChange(pParse, regData, pTab->nCol);
   }
-  if( pParse->nested ){
-    pik_flags = 0;
-  }else{
-    pik_flags = OPFLAG_NCHANGE;
+  pik_flags = OPFLAG_NCHANGE;
+  if( ! pParse->nested ){
     pik_flags |= (isUpdate?OPFLAG_ISUPDATE:OPFLAG_LASTROWID);
   }
   if( appendBias ){
